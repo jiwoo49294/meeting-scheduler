@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }} - 결과</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        h1 { color: #333; margin-top: 0; }
+        .participants {
+            background: #e3f2fd;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .calendar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .calendar-header button {
+            background: #4a90e2;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .calendar-header h2 { margin: 0; font-size: 20px; }
+        .calendar {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+        }
+        .day-name {
+            text-align: center;
+            font-weight: bold;
+            padding: 10px;
+            color: #666;
+        }
+        .day-name.sun { color: #e74c3c; }
+        .day-name.sat { color: #4a90e2; }
+        .day {
+            aspect-ratio: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #eee;
+            border-radius: 6px;
+            cursor: pointer;
+            position: relative;
+            user-select: none;
+        }
+        .day.empty { cursor: default; border: none; }
+        .day .count {
+            font-size: 11px;
+            color: #999;
+            margin-top: 2px;
+        }
+        .day.all-good {
+            background: #c8e6c9;
+            color: #2e7d32;
+            font-weight: bold;
+            border: 2px solid #4caf50;
+        }
+        .day.partial {
+            background: #fff9c4;
+            color: #f57f17;
+        }
+        .day.no-good {
+            background: #ffcdd2;
+            color: #c62828;
+        }
+        .day.selected {
+            box-shadow: 0 0 0 3px #4a90e2;
+        }
+        .legend {
+            display: flex;
+            gap: 12px;
+            margin-top: 15px;
+            font-size: 13px;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-box {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+        }
+        .best-dates {
+            margin-top: 25px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 8px;
+        }
+        .best-dates h3 { margin-top: 0; color: #2e7d32; }
+        .date-detail {
+            margin-top: 20px;
+            padding: 15px;
+            background: #fafafa;
+            border-radius: 8px;
+            display: none;
+        }
+        .date-detail.show { display: block; }
+        .add-btn {
+            background: #4a90e2;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 20px;
+            text-decoration: none;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 {{ title }}</h1>
+        
+        <div class="participants">
+            <strong>👥 참여자 ({{ participants|length }}명):</strong>
+            {% if participants %}
+                {{ participants|join(', ') }}
+            {% else %}
+                아직 아무도 입력 안 했어
+            {% endif %}
+        </div>
+        
+        {% if participants %}
+        <div class="calendar-header">
+            <button onclick="changeMonth(-1)">◀ 이전</button>
+            <h2 id="monthLabel"></h2>
+            <button onclick="changeMonth(1)">다음 ▶</button>
+        </div>
+        
+        <div class="calendar" id="calendar"></div>
+        
+        <div class="legend">
+            <div class="legend-item"><div class="legend-box" style="background:#c8e6c9;border:2px solid #4caf50"></div>다 가능</div>
+            <div class="legend-item"><div class="legend-box" style="background:#fff9c4"></div>일부 가능</div>
+            <div class="legend-item"><div class="legend-box" style="background:#ffcdd2"></div>다수 불가</div>
+        </div>
+        
+        <div class="date-detail" id="dateDetail"></div>
+        
+        <div class="best-dates" id="bestDates"></div>
+        {% endif %}
+        
+        <a href="/meeting/{{ meeting_id }}" class="add-btn">+ 참여자 추가하기</a>
+    </div>
+    
+    <script>
+        // 서버에서 받은 데이터
+        const participants = {{ participants|tojson }};
+        const oneTimeUnavailable = {{ one_time|tojson }};  // {참여자명: [날짜들]}
+        const recurringUnavailable = {{ recurring|tojson }}; // {참여자명: [요일들]}
+        
+        let currentDate = new Date();
+        let selectedDate = null;
+        
+        // 특정 날짜에 안 되는 사람들 찾기
+        function getUnavailablePeople(dateStr) {
+            const date = new Date(dateStr);
+            const dayOfWeek = date.getDay();
+            const unavailable = [];
+            
+            for (const person of participants) {
+                // 일회성 체크
+                if (oneTimeUnavailable[person] && oneTimeUnavailable[person].includes(dateStr)) {
+                    unavailable.push(person);
+                    continue;
+                }
+                // 반복 요일 체크
+                if (recurringUnavailable[person] && recurringUnavailable[person].includes(dayOfWeek)) {
+                    unavailable.push(person);
+                }
+            }
+            return unavailable;
+        }
+        
+        // 달력 그리기
+        function renderCalendar() {
+            const year = currentDate.getFullYear();
+            const month = currentDate.getMonth();
+            
+            document.getElementById('monthLabel').innerText = `${year}년 ${month + 1}월`;
+            
+            const calendar = document.getElementById('calendar');
+            calendar.innerHTML = '';
+            
+            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+            dayNames.forEach((name, i) => {
+                const div = document.createElement('div');
+                div.className = 'day-name';
+                if (i === 0) div.classList.add('sun');
+                if (i === 6) div.classList.add('sat');
+                div.innerText = name;
+                calendar.appendChild(div);
+            });
+            
+            const firstDay = new Date(year, month, 1).getDay();
+            const lastDate = new Date(year, month + 1, 0).getDate();
+            const total = participants.length;
+            
+            for (let i = 0; i < firstDay; i++) {
+                const div = document.createElement('div');
+                div.className = 'day empty';
+                calendar.appendChild(div);
+            }
+            
+            for (let d = 1; d <= lastDate; d++) {
+                const div = document.createElement('div');
+                div.className = 'day';
+                
+                const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                const unavailable = getUnavailablePeople(dateStr);
+                const availableCount = total - unavailable.length;
+                
+                div.innerHTML = `<div>${d}</div><div class="count">${availableCount}/${total}</div>`;
+                
+                if (unavailable.length === 0) {
+                    div.classList.add('all-good');
+                } else if (unavailable.length < total / 2) {
+                    div.classList.add('partial');
+                } else {
+                    div.classList.add('no-good');
+                }
+                
+                if (selectedDate === dateStr) {
+                    div.classList.add('selected');
+                }
+                
+                div.onclick = () => showDetail(dateStr);
+                calendar.appendChild(div);
+            }
+        }
+        
+        // 날짜 상세 보기
+        function showDetail(dateStr) {
+            selectedDate = dateStr;
+            const unavailable = getUnavailablePeople(dateStr);
+            const available = participants.filter(p => !unavailable.includes(p));
+            
+            const detail = document.getElementById('dateDetail');
+            detail.classList.add('show');
+            detail.innerHTML = `
+                <strong>📌 ${dateStr}</strong><br>
+                ✅ 가능 (${available.length}명): ${available.join(', ') || '없음'}<br>
+                ❌ 불가 (${unavailable.length}명): ${unavailable.join(', ') || '없음'}
+            `;
+            renderCalendar();
+        }
+        
+        // 다 되는 날 목록 만들기 (앞으로 60일)
+        function findBestDates() {
+            const best = [];
+            const today = new Date();
+            for (let i = 0; i < 60; i++) {
+                const d = new Date(today);
+                d.setDate(today.getDate() + i);
+                const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                if (getUnavailablePeople(dateStr).length === 0) {
+                    best.push(dateStr);
+                }
+            }
+            
+            const box = document.getElementById('bestDates');
+            if (best.length === 0) {
+                box.innerHTML = '<h3>😢 앞으로 60일간 다 되는 날이 없어</h3><p>참여자별 일정을 다시 확인해봐.</p>';
+            } else {
+                box.innerHTML = `<h3>✅ 앞으로 60일간 다 되는 날 (${best.length}일)</h3><p>${best.slice(0, 15).join(', ')}${best.length > 15 ? ' ...' : ''}</p>`;
+            }
+        }
+        
+        function changeMonth(diff) {
+            currentDate.setMonth(currentDate.getMonth() + diff);
+            renderCalendar();
+        }
+        
+        if (participants.length > 0) {
+            renderCalendar();
+            findBestDates();
+        }
+    </script>
+</body>
+</html>

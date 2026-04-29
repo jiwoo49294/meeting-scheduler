@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        h1 { color: #333; margin-top: 0; }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-sizing: border-box;
+            margin-bottom: 20px;
+        }
+        .calendar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .calendar-header button {
+            background: #4a90e2;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .calendar-header h2 {
+            margin: 0;
+            font-size: 20px;
+        }
+        .calendar {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+        }
+        .day-name {
+            text-align: center;
+            font-weight: bold;
+            padding: 10px;
+            color: #666;
+        }
+        .day-name.sun { color: #e74c3c; }
+        .day-name.sat { color: #4a90e2; }
+        .day {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #eee;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.15s;
+        }
+        .day:hover { background: #f0f7ff; }
+        .day.empty { cursor: default; border: none; }
+        .day.unavailable {
+            background: #ffcdd2;
+            color: #c62828;
+            font-weight: bold;
+        }
+        .day.recurring {
+            background: #ffe0b2;
+            color: #e65100;
+            font-weight: bold;
+        }
+        .day.today {
+            border: 2px solid #4a90e2;
+        }
+        .recurring-section {
+            margin-top: 25px;
+            padding: 15px;
+            background: #fff8e1;
+            border-radius: 8px;
+        }
+        .recurring-section label {
+            display: block;
+            margin: 8px 0;
+            cursor: pointer;
+        }
+        .save-btn {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .save-btn:hover { background: #45a049; }
+        .legend {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            font-size: 14px;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-box {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📅 {{ title }}</h1>
+        <p>안 되는 날을 달력에서 클릭해줘. 한 번 더 누르면 취소돼.</p>
+        
+        <input type="text" id="name" placeholder="이름을 입력해줘" required>
+        
+        <div class="calendar-header">
+            <button onclick="changeMonth(-1)">◀ 이전</button>
+            <h2 id="monthLabel"></h2>
+            <button onclick="changeMonth(1)">다음 ▶</button>
+        </div>
+        
+        <div class="calendar" id="calendar"></div>
+        
+        <div class="legend">
+            <div class="legend-item"><div class="legend-box" style="background:#ffcdd2"></div>일회성</div>
+            <div class="legend-item"><div class="legend-box" style="background:#ffe0b2"></div>매주 반복</div>
+        </div>
+        
+        <div class="recurring-section">
+            <strong>🔁 매주 반복으로 안 되는 요일</strong>
+            <p style="font-size:14px;color:#666;margin:5px 0 10px 0;">ex. 학원, 알바</p>
+            <label><input type="checkbox" class="recurring-day" value="0"> 일요일</label>
+            <label><input type="checkbox" class="recurring-day" value="1"> 월요일</label>
+            <label><input type="checkbox" class="recurring-day" value="2"> 화요일</label>
+            <label><input type="checkbox" class="recurring-day" value="3"> 수요일</label>
+            <label><input type="checkbox" class="recurring-day" value="4"> 목요일</label>
+            <label><input type="checkbox" class="recurring-day" value="5"> 금요일</label>
+            <label><input type="checkbox" class="recurring-day" value="6"> 토요일</label>
+        </div>
+        
+        <button class="save-btn" onclick="save()">저장하기</button>
+    </div>
+    
+    <script>
+        const meetingId = "{{ meeting_id }}";
+        let currentDate = new Date();
+        let unavailableDates = new Set();  // 클릭한 날짜들 저장
+        
+        // 달력 그리기
+        function renderCalendar() {
+            const year = currentDate.getFullYear();
+            const month = currentDate.getMonth();
+            
+            document.getElementById('monthLabel').innerText = `${year}년 ${month + 1}월`;
+            
+            const calendar = document.getElementById('calendar');
+            calendar.innerHTML = '';
+            
+            // 요일 헤더
+            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+            dayNames.forEach((name, i) => {
+                const div = document.createElement('div');
+                div.className = 'day-name';
+                if (i === 0) div.classList.add('sun');
+                if (i === 6) div.classList.add('sat');
+                div.innerText = name;
+                calendar.appendChild(div);
+            });
+            
+            // 첫 날 요일 계산
+            const firstDay = new Date(year, month, 1).getDay();
+            const lastDate = new Date(year, month + 1, 0).getDate();
+            
+            // 빈 칸 채우기
+            for (let i = 0; i < firstDay; i++) {
+                const div = document.createElement('div');
+                div.className = 'day empty';
+                calendar.appendChild(div);
+            }
+            
+            // 반복 요일 가져오기
+            const recurringDays = Array.from(document.querySelectorAll('.recurring-day:checked'))
+                .map(cb => parseInt(cb.value));
+            
+            // 날짜 채우기
+            const today = new Date();
+            for (let d = 1; d <= lastDate; d++) {
+                const div = document.createElement('div');
+                div.className = 'day';
+                div.innerText = d;
+                
+                const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                const dayOfWeek = new Date(year, month, d).getDay();
+                
+                // 오늘 표시
+                if (year === today.getFullYear() && month === today.getMonth() && d === today.getDate()) {
+                    div.classList.add('today');
+                }
+                
+                // 반복 요일이면 주황색
+                if (recurringDays.includes(dayOfWeek)) {
+                    div.classList.add('recurring');
+                }
+                
+                // 클릭한 날이면 빨강 (반복보다 우선)
+                if (unavailableDates.has(dateStr)) {
+                    div.classList.remove('recurring');
+                    div.classList.add('unavailable');
+                }
+                
+                div.onclick = () => toggleDate(dateStr);
+                calendar.appendChild(div);
+            }
+        }
+        
+        // 날짜 클릭
+        function toggleDate(dateStr) {
+            if (unavailableDates.has(dateStr)) {
+                unavailableDates.delete(dateStr);
+            } else {
+                unavailableDates.add(dateStr);
+            }
+            renderCalendar();
+        }
+        
+        // 월 이동
+        function changeMonth(diff) {
+            currentDate.setMonth(currentDate.getMonth() + diff);
+            renderCalendar();
+        }
+        
+        // 반복 요일 체크 시 다시 그리기
+        document.querySelectorAll('.recurring-day').forEach(cb => {
+            cb.addEventListener('change', renderCalendar);
+        });
+        
+        // 저장
+        async function save() {
+            const name = document.getElementById('name').value.trim();
+            if (!name) {
+                alert('이름을 입력해줘!');
+                return;
+            }
+            
+            const recurringDays = Array.from(document.querySelectorAll('.recurring-day:checked'))
+                .map(cb => parseInt(cb.value));
+            
+            const response = await fetch(`/meeting/${meetingId}/submit`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: name,
+                    dates: Array.from(unavailableDates),
+                    recurring: recurringDays
+                })
+            });
+            
+            if (response.ok) {
+                alert('저장됐어!');
+                window.location.href = `/meeting/${meetingId}/result`;
+            } else {
+                alert('저장 실패 ㅠㅠ');
+            }
+        }
+        
+        renderCalendar();
+    </script>
+</body>
+</html>
