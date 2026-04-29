@@ -121,7 +121,13 @@
             display: none;
         }
         .date-detail.show { display: block; }
-        .add-btn {
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .add-btn, .share-btn {
             background: #4a90e2;
             color: white;
             border: none;
@@ -129,9 +135,38 @@
             font-size: 14px;
             border-radius: 6px;
             cursor: pointer;
-            margin-top: 20px;
             text-decoration: none;
             display: inline-block;
+            flex: 1;
+            text-align: center;
+            font-family: inherit;
+        }
+        .share-btn {
+            background: #4caf50;
+        }
+        .share-btn:hover {
+            background: #45a049;
+        }
+        .add-btn:hover {
+            background: #357abd;
+        }
+        .share-popup {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        .share-popup.show {
+            opacity: 1;
         }
     </style>
 </head>
@@ -168,7 +203,10 @@
         <div class="best-dates" id="bestDates"></div>
         {% endif %}
         
-        <a href="/meeting/{{ meeting_id }}" class="add-btn">+ 참여자 추가하기</a>
+        <div class="action-buttons">
+            <a href="/meeting/{{ meeting_id }}" class="add-btn">+ 참여자 추가</a>
+            <button class="share-btn" onclick="shareLink()">🔗 링크 공유</button>
+        </div>
     </div>
     
     <script>
@@ -297,6 +335,50 @@
         function changeMonth(diff) {
             currentDate.setMonth(currentDate.getMonth() + diff);
             renderCalendar();
+        }
+        
+        // 공유 기능
+        async function shareLink() {
+            const link = window.location.origin + `/meeting/{{ meeting_id }}`;
+            const title = "{{ title }}";
+            
+            // 모바일이면 시스템 공유창 (카톡, 메시지 등 앱 선택 가능)
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: `📅 ${title}`,
+                        text: `"${title}" 약속 일정 맞추자!`,
+                        url: link
+                    });
+                    return;
+                } catch (e) {
+                    // 사용자가 공유 취소하면 무시
+                    if (e.name === 'AbortError') return;
+                }
+            }
+            
+            // 데스크탑이면 클립보드 복사
+            try {
+                await navigator.clipboard.writeText(link);
+                showPopup('✅ 링크 복사 완료!');
+            } catch (e) {
+                // 클립보드 실패하면 prompt로 보여주기
+                prompt('이 링크를 복사해서 공유해:', link);
+            }
+        }
+        
+        // 토스트 팝업
+        function showPopup(message) {
+            let popup = document.getElementById('sharePopup');
+            if (!popup) {
+                popup = document.createElement('div');
+                popup.id = 'sharePopup';
+                popup.className = 'share-popup';
+                document.body.appendChild(popup);
+            }
+            popup.innerText = message;
+            popup.classList.add('show');
+            setTimeout(() => popup.classList.remove('show'), 2000);
         }
         
         if (participants.length > 0) {
