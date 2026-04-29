@@ -7,6 +7,7 @@ app = Flask(__name__)
 def init_db():
     conn = sqlite3.connect('meetings.db')
     cursor = conn.cursor()
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS meetings (
             id TEXT PRIMARY KEY,
@@ -14,6 +15,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS participants (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,15 +23,24 @@ def init_db():
             name TEXT NOT NULL
         )
     ''')
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS unavailable_dates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             participant_id INTEGER NOT NULL,
             date TEXT NOT NULL,
             is_recurring INTEGER DEFAULT 0,
-            recurrence_day INTEGER
+            recurrence_day INTEGER,
+            is_exception INTEGER DEFAULT 0
         )
     ''')
+    
+    # 이미 있는 DB에 컬럼 추가 (있으면 무시됨)
+    try:
+        cursor.execute('ALTER TABLE unavailable_dates ADD COLUMN is_exception INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
+    
     conn.commit()
     conn.close()
     print("✅ 데이터베이스 준비 완료!")
@@ -72,7 +83,6 @@ def load_existing(meeting_id, name):
     conn = sqlite3.connect('meetings.db')
     cursor = conn.cursor()
     
-    # 같은 약속 + 같은 이름 참여자 찾기
     cursor.execute(
         'SELECT id FROM participants WHERE meeting_id = ? AND name = ?',
         (meeting_id, name)
@@ -85,21 +95,25 @@ def load_existing(meeting_id, name):
     
     participant_id = row[0]
     
-    # 안 되는 날짜 가져오기
     cursor.execute(
-        'SELECT date, is_recurring, recurrence_day FROM unavailable_dates WHERE participant_id = ?',
+        'SELECT date, is_recurring, recurrence_day, is_exception FROM unavailable_dates WHERE participant_id = ?',
         (participant_id,)
     )
     rows = cursor.fetchall()
     conn.close()
     
-    dates = [r[0] for r in rows if r[1] == 0]
+    # 일회성 안 되는 날
+    dates = [r[0] for r in rows if r[1] == 0 and r[3] == 0]
+    # 반복 요일
     recurring = [r[2] for r in rows if r[1] == 1]
+    # 예외 (반복이지만 이번엔 됨)
+    exceptions = [r[0] for r in rows if r[1] == 0 and r[3] == 1]
     
     return jsonify({
         'exists': True,
         'dates': dates,
-        'recurring': recurring
+        'recurring': recurring,
+        'exceptions': exceptions
     })
 
 # 참여자 데이터 저장 (수정도 가능)
@@ -109,11 +123,11 @@ def submit_availability(meeting_id):
     name = data.get('name')
     dates = data.get('dates', [])
     recurring = data.get('recurring', [])
+    exceptions = data.get('exceptions', [])
     
     conn = sqlite3.connect('meetings.db')
     cursor = conn.cursor()
     
-    # 같은 이름 있는지 확인
     cursor.execute(
         'SELECT id FROM participants WHERE meeting_id = ? AND name = ?',
         (meeting_id, name)
@@ -121,32 +135,37 @@ def submit_availability(meeting_id):
     existing = cursor.fetchone()
     
     if existing:
-        # 기존 사용자 → 기존 일정 다 지우고 새로 저장 (덮어쓰기)
         participant_id = existing[0]
         cursor.execute(
             'DELETE FROM unavailable_dates WHERE participant_id = ?',
             (participant_id,)
         )
     else:
-        # 새 사용자 → 새로 추가
         cursor.execute(
             'INSERT INTO participants (meeting_id, name) VALUES (?, ?)',
             (meeting_id, name)
         )
         participant_id = cursor.lastrowid
     
-    # 일회성 안 되는 날 저장
+    # 일회성 안 되는 날
     for date in dates:
         cursor.execute(
-            'INSERT INTO unavailable_dates (participant_id, date, is_recurring) VALUES (?, ?, 0)',
+            'INSERT INTO unavailable_dates (participant_id, date, is_recurring, is_exception) VALUES (?, ?, 0, 0)',
             (participant_id, date)
         )
     
-    # 반복 요일 저장
+    # 반복 요일
     for day in recurring:
         cursor.execute(
-            'INSERT INTO unavailable_dates (participant_id, date, is_recurring, recurrence_day) VALUES (?, ?, 1, ?)',
+            'INSERT INTO unavailable_dates (participant_id, date, is_recurring, recurrence_day, is_exception) VALUES (?, ?, 1, ?, 0)',
             (participant_id, '', day)
+        )
+    
+    # 예외 (반복인데 이번엔 됨)
+    for date in exceptions:
+        cursor.execute(
+            'INSERT INTO unavailable_dates (participant_id, date, is_recurring, is_exception) VALUES (?, ?, 0, 1)',
+            (participant_id, date)
         )
     
     conn.commit()
@@ -159,7 +178,6 @@ def result_page(meeting_id):
     conn = sqlite3.connect('meetings.db')
     cursor = conn.cursor()
     
-    # 약속 정보
     cursor.execute('SELECT title FROM meetings WHERE id = ?', (meeting_id,))
     row = cursor.fetchone()
     if not row:
@@ -167,23 +185,23 @@ def result_page(meeting_id):
         return '<h1>약속을 찾을 수 없어 😢</h1>', 404
     title = row[0]
     
-    # 참여자들
     cursor.execute('SELECT id, name FROM participants WHERE meeting_id = ?', (meeting_id,))
     participants_data = cursor.fetchall()
     participant_names = [p[1] for p in participants_data]
     
-    # 각 참여자별 안 되는 날 / 반복 요일
-    one_time = {}      # {이름: [날짜들]}
-    recurring = {}     # {이름: [요일들]}
+    one_time = {}
+    recurring = {}
+    exceptions = {}
     
     for pid, pname in participants_data:
         cursor.execute(
-            'SELECT date, is_recurring, recurrence_day FROM unavailable_dates WHERE participant_id = ?',
+            'SELECT date, is_recurring, recurrence_day, is_exception FROM unavailable_dates WHERE participant_id = ?',
             (pid,)
         )
         rows = cursor.fetchall()
-        one_time[pname] = [r[0] for r in rows if r[1] == 0]
+        one_time[pname] = [r[0] for r in rows if r[1] == 0 and r[3] == 0]
         recurring[pname] = [r[2] for r in rows if r[1] == 1]
+        exceptions[pname] = [r[0] for r in rows if r[1] == 0 and r[3] == 1]
     
     conn.close()
     
@@ -193,7 +211,8 @@ def result_page(meeting_id):
         meeting_id=meeting_id,
         participants=participant_names,
         one_time=one_time,
-        recurring=recurring
+        recurring=recurring,
+        exceptions=exceptions
     )
 
 init_db()  # 서버 시작할 때 항상 실행

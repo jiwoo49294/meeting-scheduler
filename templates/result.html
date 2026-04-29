@@ -212,8 +212,9 @@
     <script>
         // 서버에서 받은 데이터
         const participants = {{ participants|tojson }};
-        const oneTimeUnavailable = {{ one_time|tojson }};  // {참여자명: [날짜들]}
-        const recurringUnavailable = {{ recurring|tojson }}; // {참여자명: [요일들]}
+        const oneTimeUnavailable = {{ one_time|tojson }};
+        const recurringUnavailable = {{ recurring|tojson }};
+        const exceptionDates = {{ exceptions|tojson }};
         
         let currentDate = new Date();
         let selectedDate = null;
@@ -225,12 +226,16 @@
             const unavailable = [];
             
             for (const person of participants) {
-                // 일회성 체크
+                // 일회성 안 됨이면 → 안 됨
                 if (oneTimeUnavailable[person] && oneTimeUnavailable[person].includes(dateStr)) {
                     unavailable.push(person);
                     continue;
                 }
-                // 반복 요일 체크
+                // 반복 요일에 속하지만 예외라면 → 됨 (skip)
+                if (exceptionDates[person] && exceptionDates[person].includes(dateStr)) {
+                    continue;
+                }
+                // 반복 요일이면 → 안 됨
                 if (recurringUnavailable[person] && recurringUnavailable[person].includes(dayOfWeek)) {
                     unavailable.push(person);
                 }
@@ -311,7 +316,7 @@
             renderCalendar();
         }
         
-        // 다 되는 날 목록 만들기 (앞으로 60일)
+        // 다 되는 날 목록 (앞으로 60일)
         function findBestDates() {
             const best = [];
             const today = new Date();
@@ -342,7 +347,6 @@
             const link = window.location.origin + `/meeting/{{ meeting_id }}`;
             const title = "{{ title }}";
             
-            // 모바일이면 시스템 공유창 (카톡, 메시지 등 앱 선택 가능)
             if (navigator.share) {
                 try {
                     await navigator.share({
@@ -352,22 +356,18 @@
                     });
                     return;
                 } catch (e) {
-                    // 사용자가 공유 취소하면 무시
                     if (e.name === 'AbortError') return;
                 }
             }
             
-            // 데스크탑이면 클립보드 복사
             try {
                 await navigator.clipboard.writeText(link);
                 showPopup('✅ 링크 복사 완료!');
             } catch (e) {
-                // 클립보드 실패하면 prompt로 보여주기
                 prompt('이 링크를 복사해서 공유해:', link);
             }
         }
         
-        // 토스트 팝업
         function showPopup(message) {
             let popup = document.getElementById('sharePopup');
             if (!popup) {

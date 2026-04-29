@@ -166,9 +166,9 @@
     <script>
         const meetingId = "{{ meeting_id }}";
         let currentDate = new Date();
-        let unavailableDates = new Set();  // 클릭한 날짜들 저장
-        
-        let isEditMode = false;  // 수정 모드인지 여부
+        let unavailableDates = new Set();  // 일회성 안 되는 날
+        let exceptions = new Set();         // 반복 요일이지만 이번엔 되는 날 (예외)
+        let isEditMode = false;
         
         // 이름 입력 시 기존 일정 있는지 확인
         document.getElementById('name').addEventListener('blur', async function() {
@@ -187,8 +187,8 @@
                     );
                     
                     if (choice) {
-                        // 기존 일정 불러오기
                         unavailableDates = new Set(data.dates);
+                        exceptions = new Set(data.exceptions || []);
                         document.querySelectorAll('.recurring-day').forEach(cb => {
                             cb.checked = data.recurring.includes(parseInt(cb.value));
                         });
@@ -212,7 +212,6 @@
             const calendar = document.getElementById('calendar');
             calendar.innerHTML = '';
             
-            // 요일 헤더
             const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
             dayNames.forEach((name, i) => {
                 const div = document.createElement('div');
@@ -223,22 +222,18 @@
                 calendar.appendChild(div);
             });
             
-            // 첫 날 요일 계산
             const firstDay = new Date(year, month, 1).getDay();
             const lastDate = new Date(year, month + 1, 0).getDate();
             
-            // 빈 칸 채우기
+            const recurringDays = Array.from(document.querySelectorAll('.recurring-day:checked'))
+                .map(cb => parseInt(cb.value));
+            
             for (let i = 0; i < firstDay; i++) {
                 const div = document.createElement('div');
                 div.className = 'day empty';
                 calendar.appendChild(div);
             }
             
-            // 반복 요일 가져오기
-            const recurringDays = Array.from(document.querySelectorAll('.recurring-day:checked'))
-                .map(cb => parseInt(cb.value));
-            
-            // 날짜 채우기
             const today = new Date();
             for (let d = 1; d <= lastDate; d++) {
                 const div = document.createElement('div');
@@ -253,12 +248,12 @@
                     div.classList.add('today');
                 }
                 
-                // 반복 요일이면 주황색
-                if (recurringDays.includes(dayOfWeek)) {
+                // 반복 요일이면 주황 (예외 제외)
+                if (recurringDays.includes(dayOfWeek) && !exceptions.has(dateStr)) {
                     div.classList.add('recurring');
                 }
                 
-                // 클릭한 날이면 빨강 (반복보다 우선)
+                // 일회성 안 됨이면 빨강 (반복보다 우선)
                 if (unavailableDates.has(dateStr)) {
                     div.classList.remove('recurring');
                     div.classList.add('unavailable');
@@ -271,9 +266,24 @@
         
         // 날짜 클릭
         function toggleDate(dateStr) {
+            const date = new Date(dateStr);
+            const dayOfWeek = date.getDay();
+            const recurringDays = Array.from(document.querySelectorAll('.recurring-day:checked'))
+                .map(cb => parseInt(cb.value));
+            const isRecurringDay = recurringDays.includes(dayOfWeek);
+            
             if (unavailableDates.has(dateStr)) {
+                // 빨강 → 빈 칸
                 unavailableDates.delete(dateStr);
+            } else if (isRecurringDay && !exceptions.has(dateStr)) {
+                // 주황 → 빈 칸 (반복 예외)
+                exceptions.add(dateStr);
+            } else if (exceptions.has(dateStr)) {
+                // 빈 칸(예외 상태) → 빨강
+                exceptions.delete(dateStr);
+                unavailableDates.add(dateStr);
             } else {
+                // 빈 칸 → 빨강
                 unavailableDates.add(dateStr);
             }
             renderCalendar();
@@ -285,9 +295,19 @@
             renderCalendar();
         }
         
-        // 반복 요일 체크 시 다시 그리기
+        // 반복 요일 체크 시 다시 그리기 + 해제된 요일 예외 정리
         document.querySelectorAll('.recurring-day').forEach(cb => {
-            cb.addEventListener('change', renderCalendar);
+            cb.addEventListener('change', () => {
+                const activeRecurringDays = Array.from(document.querySelectorAll('.recurring-day:checked'))
+                    .map(c => parseInt(c.value));
+                exceptions.forEach(dateStr => {
+                    const day = new Date(dateStr).getDay();
+                    if (!activeRecurringDays.includes(day)) {
+                        exceptions.delete(dateStr);
+                    }
+                });
+                renderCalendar();
+            });
         });
         
         // 저장
@@ -307,7 +327,8 @@
                 body: JSON.stringify({
                     name: name,
                     dates: Array.from(unavailableDates),
-                    recurring: recurringDays
+                    recurring: recurringDays,
+                    exceptions: Array.from(exceptions)
                 })
             });
             
