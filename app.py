@@ -66,7 +66,43 @@ def meeting_page(meeting_id):
     
     return render_template('meeting.html', title=row[0], meeting_id=meeting_id)
 
-# 참여자 데이터 저장
+# 이름으로 기존 일정 불러오기
+@app.route('/meeting/<meeting_id>/load/<name>')
+def load_existing(meeting_id, name):
+    conn = sqlite3.connect('meetings.db')
+    cursor = conn.cursor()
+    
+    # 같은 약속 + 같은 이름 참여자 찾기
+    cursor.execute(
+        'SELECT id FROM participants WHERE meeting_id = ? AND name = ?',
+        (meeting_id, name)
+    )
+    row = cursor.fetchone()
+    
+    if not row:
+        conn.close()
+        return jsonify({'exists': False})
+    
+    participant_id = row[0]
+    
+    # 안 되는 날짜 가져오기
+    cursor.execute(
+        'SELECT date, is_recurring, recurrence_day FROM unavailable_dates WHERE participant_id = ?',
+        (participant_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    
+    dates = [r[0] for r in rows if r[1] == 0]
+    recurring = [r[2] for r in rows if r[1] == 1]
+    
+    return jsonify({
+        'exists': True,
+        'dates': dates,
+        'recurring': recurring
+    })
+
+# 참여자 데이터 저장 (수정도 가능)
 @app.route('/meeting/<meeting_id>/submit', methods=['POST'])
 def submit_availability(meeting_id):
     data = request.json
@@ -77,12 +113,27 @@ def submit_availability(meeting_id):
     conn = sqlite3.connect('meetings.db')
     cursor = conn.cursor()
     
-    # 참여자 추가
+    # 같은 이름 있는지 확인
     cursor.execute(
-        'INSERT INTO participants (meeting_id, name) VALUES (?, ?)',
+        'SELECT id FROM participants WHERE meeting_id = ? AND name = ?',
         (meeting_id, name)
     )
-    participant_id = cursor.lastrowid
+    existing = cursor.fetchone()
+    
+    if existing:
+        # 기존 사용자 → 기존 일정 다 지우고 새로 저장 (덮어쓰기)
+        participant_id = existing[0]
+        cursor.execute(
+            'DELETE FROM unavailable_dates WHERE participant_id = ?',
+            (participant_id,)
+        )
+    else:
+        # 새 사용자 → 새로 추가
+        cursor.execute(
+            'INSERT INTO participants (meeting_id, name) VALUES (?, ?)',
+            (meeting_id, name)
+        )
+        participant_id = cursor.lastrowid
     
     # 일회성 안 되는 날 저장
     for date in dates:
@@ -100,7 +151,7 @@ def submit_availability(meeting_id):
     
     conn.commit()
     conn.close()
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'updated': existing is not None})
 
 # 결과 페이지
 @app.route('/meeting/<meeting_id>/result')

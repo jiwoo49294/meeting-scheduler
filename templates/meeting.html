@@ -168,6 +168,40 @@
         let currentDate = new Date();
         let unavailableDates = new Set();  // 클릭한 날짜들 저장
         
+        let isEditMode = false;  // 수정 모드인지 여부
+        
+        // 이름 입력 시 기존 일정 있는지 확인
+        document.getElementById('name').addEventListener('blur', async function() {
+            const name = this.value.trim();
+            if (!name) return;
+            
+            try {
+                const response = await fetch(`/meeting/${meetingId}/load/${encodeURIComponent(name)}`);
+                const data = await response.json();
+                
+                if (data.exists) {
+                    const choice = confirm(
+                        `"${name}"(으)로 입력한 일정이 이미 있어!\n\n` +
+                        `[확인] 기존 일정 불러와서 수정\n` +
+                        `[취소] 무시하고 새로 시작 (저장하면 덮어써짐)`
+                    );
+                    
+                    if (choice) {
+                        // 기존 일정 불러오기
+                        unavailableDates = new Set(data.dates);
+                        document.querySelectorAll('.recurring-day').forEach(cb => {
+                            cb.checked = data.recurring.includes(parseInt(cb.value));
+                        });
+                        isEditMode = true;
+                        renderCalendar();
+                        document.querySelector('.save-btn').innerText = '수정 저장하기 ✏️';
+                    }
+                }
+            } catch (e) {
+                console.error('일정 확인 실패:', e);
+            }
+        });
+        
         // 달력 그리기
         function renderCalendar() {
             const year = currentDate.getFullYear();
